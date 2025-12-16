@@ -22,6 +22,17 @@ async function run() {
         await client.connect();
 
         const db = client.db('assets_verse_db')
+        const packageCollection = db.collection('packages');
+
+
+app.get('/packages', async (req, res) => {
+    const result = await packageCollection.find().toArray();
+    res.send(result);
+});
+
+
+
+
 
 
         // Send a ping to confirm a successful connection
