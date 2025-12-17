@@ -3,6 +3,8 @@ const cors = require('cors');
 require('dotenv').config();
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const bodyParser = require("body-parser");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -21,6 +23,9 @@ async function run() {
         const db = client.db('assets_verse_db');
         const usersCollection = db.collection('users');
         const packageCollection = db.collection('packages');
+        const assetsCollection = db.collection("assets");
+        const paymentsCollection = db.collection('payments');
+
 
         console.log("Connected to MongoDB!");
 
@@ -113,6 +118,91 @@ async function run() {
                 res.status(500).send({ error: 'Server error' });
             }
         });
+        // Assets collection
+
+
+// Get all assets
+app.get("/assets", async (req, res) => {
+  try {
+    const assets = await assetsCollection.find().toArray();
+    res.send(assets);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+// Add new asset
+app.post("/assets", async (req, res) => {
+  try {
+    const asset = req.body;
+    const result = await assetsCollection.insertOne(asset);
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+// Delete an asset by ID
+const { ObjectId } = require("mongodb");
+app.delete("/assets/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await assetsCollection.deleteOne({ _id: new ObjectId(id) });
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const { packageId, email } = req.body;
+    const selectedPackage = await packageCollection.findOne({ _id: new ObjectId(packageId) });
+
+    if (!selectedPackage) {
+      return res.status(404).send({ error: "Package not found" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: selectedPackage.name,
+            },
+            unit_amount: selectedPackage.price * 100,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `http://localhost:5173/dashboard/hr?success=true&pkg=${selectedPackage.name}&price=${selectedPackage.price}`,
+      cancel_url: `http://localhost:5173/dashboard/upgrade`,
+    });
+
+    res.send({ url: session.url });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Stripe session failed" });
+  }
+});
+app.post("/payments", async (req, res) => {
+  const payment = req.body;
+  payment.date = new Date();
+  const result = await paymentsCollection.insertOne(payment);
+  res.send(result);
+});
+app.get("/payments", async (req, res) => {
+  const email = req.query.email;
+  const payments = await paymentsCollection.find({ email }).toArray();
+  res.send(payments);
+});
+
 
     } finally {
         // keep connection open
