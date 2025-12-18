@@ -125,6 +125,69 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
         });
         // Assets collection
 
+
+
+
+
+
+        // Get all assets-----------------------------
+app.get("/assets", async (req, res) => {
+  try {
+    const assets = await assetsCollection.find().toArray();
+    res.send(assets);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+// Add new asset-------------------------
+app.post("/assets", async (req, res) => {
+  try {
+    const asset = req.body;
+
+    // Check required fields
+    if (!asset.productName || !asset.productType || asset.productQuantity == null) {
+      return res.status(400).send({ error: "Missing required fields" });
+    }
+
+    // Ensure hrEmail is attached
+    if (!asset.hrEmail) {
+      return res.status(400).send({ error: "HR email required" });
+    }
+
+    // Track availableQuantity separately--
+    asset.availableQuantity = asset.productQuantity;
+
+    const result = await assetsCollection.insertOne(asset);
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+// Delete an asset by ID---------------------
+const { ObjectId } = require("mongodb");
+app.delete("/assets/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await assetsCollection.deleteOne({ _id: new ObjectId(id) });
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+// all request----------------------
+app.get("/hr/requests", async (req, res) => {
+  const hrEmail = req.query.hrEmail;
+  const requests = await requestsCollection
+    .find({ hrEmail })
+    .sort({ requestDate: -1 })
+    .toArray();
+  res.send(requests);
+});
 // --------------------------------------------------------
 app.patch("/hr/requests/approve/:id", async (req, res) => {
   try {
