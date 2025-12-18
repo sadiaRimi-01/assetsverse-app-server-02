@@ -126,7 +126,52 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
         // Assets collection
 
 
+//---------------------------
+app.patch("/hr/requests/reject/:id", async (req, res) => {
+  const requestId = req.params.id;
+  const hrEmail = req.body.hrEmail;
 
+  await requestsCollection.updateOne(
+    { _id: new ObjectId(requestId) },
+    {
+      $set: {
+        requestStatus: "rejected",
+        processedBy: hrEmail,
+      },
+    }
+  );
+
+  res.send({ success: true });
+});
+
+
+// employee list----------------------------
+app.get("/hr/employees", async (req, res) => {
+  try {
+    const hrEmail = req.query.hrEmail;
+
+    const employees = await employeeAffiliationsCollection
+      .find({ hrEmail, status: "active" })
+      .toArray();
+
+    // Assets count per employee
+    const employeesWithAssets = await Promise.all(
+      employees.map(async (emp) => {
+        const assetsCount = await assignedAssetsCollection.countDocuments({
+          employeeEmail: emp.employeeEmail,
+          status: "assigned",
+        });
+
+        return { ...emp, assetsCount };
+      })
+    );
+
+    res.send(employeesWithAssets);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to load employees" });
+  }
+});
 
 // -------------------------------------
 app.patch("/hr/employees/remove/:email", async (req, res) => {
