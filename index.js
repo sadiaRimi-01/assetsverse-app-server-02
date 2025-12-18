@@ -132,7 +132,41 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
 
 
+// Get assigned assets for employee---------------
+app.get("/assigned-assets", async (req, res) => {
+  const email = req.query.email;
+  const assets = await client.db("assets_verse_db")
+    .collection("assignedAssets")
+    .find({ employeeEmail: email })
+    .toArray();
+  res.send(assets);
+});
 
+// Return asset------------------------
+app.patch("/return-asset/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const assignedAsset = await client.db("assets_verse_db")
+      .collection("assignedAssets")
+      .findOne({ _id: new ObjectId(id) });
+
+    if (!assignedAsset) return res.status(404).send({ success: false, message: "Asset not found" });
+
+    await client.db("assets_verse_db")
+      .collection("assignedAssets")
+      .updateOne({ _id: new ObjectId(id) }, { $set: { status: "returned", returnDate: new Date() } });
+
+    // Increase available quantity in assets
+    await client.db("assets_verse_db")
+      .collection("assets")
+      .updateOne({ _id: new ObjectId(assignedAsset.assetId) }, { $inc: { availableQuantity: 1 } });
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ success: false });
+  }
+});
 
 
 
