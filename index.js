@@ -139,7 +139,91 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
 
 
+// Get all requests-------------
+app.get("/requests", async (req, res) => {
+  const requests = await client.db("assets_verse_db")
+    .collection("requests")
+    .find()
+    .sort({ requestDate: -1 })
+    .toArray();
+  res.send(requests);
+});
 
+// Approve request------------------------
+app.patch("/approve-request/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const request = await client.db("assets_verse_db")
+      .collection("requests")
+      .findOne({ _id: new ObjectId(id) });
+
+    if (!request || request.requestStatus !== "pending")
+      return res.status(400).send({ success: false, message: "Invalid request" });
+
+    // Deduct asset quantity
+    const asset = await client.db("assets_verse_db")
+      .collection("assets")
+      .findOne({ _id: new ObjectId(request.assetId) });
+
+    if (!asset || asset.availableQuantity <= 0)
+      return res.status(400).send({ success: false, message: "Asset not available" });
+
+    await client.db("assets_verse_db")
+      .collection("assets")
+      .updateOne(
+        { _id: new ObjectId(asset._id) },
+        { $inc: { availableQuantity: -1 } }
+      );
+
+    // Update request status
+    await client.db("assets_verse_db")
+      .collection("requests")
+      .updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { requestStatus: "approved", approvalDate: new Date(), processedBy: request.hrEmail } }
+      );
+
+    // Add to assignedAssets
+    await client.db("assets_verse_db")
+      .collection("assignedAssets")
+      .insertOne({
+        assetId: asset._id,
+        assetName: asset.productName,
+        assetImage: asset.productImage,
+        assetType: asset.productType,
+        employeeEmail: request.requesterEmail,
+        employeeName: request.requesterName,
+        hrEmail: request.hrEmail,
+        companyName: request.companyName,
+        assignmentDate: new Date(),
+        status: "assigned",
+      });
+
+    // Create affiliation if first request
+    const existingAffiliation = await client.db("assets_verse_db")
+      .collection("employeeAffiliations")
+      .findOne({ employeeEmail: request.requesterEmail, hrEmail: request.hrEmail });
+
+    if (!existingAffiliation) {
+      await client.db("assets_verse_db")
+        .collection("employeeAffiliations")
+        .insertOne({
+          employeeEmail: request.requesterEmail,
+          employeeName: request.requesterName,
+          hrEmail: request.hrEmail,
+          companyName: request.companyName,
+          companyLogo: "", // optional
+          affiliationDate: new Date(),
+          status: "active",
+        });
+    }
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ success: false });
+  }
+});
 
 
 // Reject request---------------------
