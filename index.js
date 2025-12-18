@@ -3,11 +3,11 @@ const cors = require('cors');
 require('dotenv').config();
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion } = require('mongodb');
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const bodyParser = require("body-parser");
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 3000;
+
 
 app.use(express.json());
 app.use(cors()); // Allow requests from all origins
@@ -25,6 +25,11 @@ async function run() {
         const packageCollection = db.collection('packages');
         const assetsCollection = db.collection("assets");
         const paymentsCollection = db.collection('payments');
+        const requestsCollection = db.collection("requests");
+const assignedAssetsCollection = db.collection("assignedAssets");
+const employeeAffiliationsCollection = db.collection("employeeAffiliations");
+
+
 
 
         console.log("Connected to MongoDB!");
@@ -121,88 +126,129 @@ async function run() {
         // Assets collection
 
 
-// Get all assets
-app.get("/assets", async (req, res) => {
-  try {
-    const assets = await assetsCollection.find().toArray();
-    res.send(assets);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ error: "Server error" });
-  }
-});
 
-// Add new asset
-app.post("/assets", async (req, res) => {
-  try {
-    const asset = req.body;
-    const result = await assetsCollection.insertOne(asset);
-    res.send(result);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ error: "Server error" });
-  }
-});
 
-// Delete an asset by ID
-const { ObjectId } = require("mongodb");
-app.delete("/assets/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const result = await assetsCollection.deleteOne({ _id: new ObjectId(id) });
-    res.send(result);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ error: "Server error" });
-  }
-});
-app.post("/create-checkout-session", async (req, res) => {
-  try {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// payment
+
+
+app.post('/create-checkout-session', async (req, res) => {
     const { packageId, email } = req.body;
-    const selectedPackage = await packageCollection.findOne({ _id: new ObjectId(packageId) });
 
-    if (!selectedPackage) {
-      return res.status(404).send({ error: "Package not found" });
-    }
+    const pkg = await packageCollection.findOne({ _id: new ObjectId(packageId) });
+    if (!pkg) return res.status(404).send({ error: "Package not found" });
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       mode: "payment",
+      payment_method_types: ["card"],
       customer_email: email,
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: selectedPackage.name,
-            },
-            unit_amount: selectedPackage.price * 100,
-          },
-          quantity: 1,
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: pkg.name },
+          unit_amount: pkg.price * 100,
         },
-      ],
-      success_url: `http://localhost:5173/dashboard/hr?success=true&pkg=${selectedPackage.name}&price=${selectedPackage.price}`,
-      cancel_url: `http://localhost:5173/dashboard/upgrade`,
+        quantity: 1
+      }],
+      metadata: {
+        hrEmail: email,
+        packageName: pkg.name,
+        employeeLimit: pkg.employeeLimit || 5
+      },
+      success_url: `${process.env.CLIENT_URL}/dashboard/hr?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/hr`,
     });
 
     res.send({ url: session.url });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ error: "Stripe session failed" });
-  }
-});
-app.post("/payments", async (req, res) => {
-  const payment = req.body;
-  payment.date = new Date();
-  const result = await paymentsCollection.insertOne(payment);
-  res.send(result);
-});
-app.get("/payments", async (req, res) => {
-  const email = req.query.email;
-  const payments = await paymentsCollection.find({ email }).toArray();
-  res.send(payments);
-});
+  });
 
+  // ---------------- PAYMENT SUCCESS ----------------
+  app.get('/payment-success', async (req, res) => {
+    try {
+      const sessionId = req.query.session_id;
+      if (!sessionId) return res.send({ success: false });
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId, {
+        expand: ["payment_intent"]
+      });
+
+      if (session.payment_status !== "paid") {
+        return res.send({ success: false });
+      }
+
+      const paymentExists = await paymentsCollection.findOne({
+        transactionId: session.payment_intent.id
+      });
+
+      if (paymentExists) {
+        return res.send({ success: true });
+      }
+
+      // ✅ SAVE PAYMENT
+      await paymentsCollection.insertOne({
+        hrEmail: session.metadata.hrEmail,
+        packageName: session.metadata.packageName,
+        employeeLimit: Number(session.metadata.employeeLimit),
+        amount: session.amount_total / 100,
+        transactionId: session.payment_intent.id,
+        paymentDate: new Date(),
+        status: "completed",
+      });
+
+      // ✅ UPDATE USER PACKAGE
+      await usersCollection.updateOne(
+        { email: session.metadata.hrEmail },
+        {
+          $set: {
+            package: session.metadata.packageName,
+            packageLimit: Number(session.metadata.employeeLimit),
+            status: "active"
+          }
+        }
+      );
+
+      res.send({ success: true });
+
+    } catch (err) {
+      console.error("❌ payment-success error:", err);
+      res.status(500).send({ success: false });
+    }
+  });
+
+  // ---------------- PAYMENT HISTORY ----------------
+  app.get('/payments', async (req, res) => {
+    const email = req.query.email;
+    res.send(
+      await paymentsCollection
+        .find({ hrEmail: email })
+        .sort({ paymentDate: -1 })
+        .toArray()
+    );
+  });
+
+
+        
 
     } finally {
         // keep connection open
