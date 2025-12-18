@@ -125,7 +125,71 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
         });
         // Assets collection
 
+// --------------------------------------------------------
+app.patch("/hr/requests/approve/:id", async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const hrEmail = req.body.hrEmail;
 
+    const request = await requestsCollection.findOne({ _id: new ObjectId(requestId) });
+    if (!request) return res.status(404).send({ message: "Request not found" });
+
+    // 1️⃣ Reduce asset quantity
+    await assetsCollection.updateOne(
+      { _id: new ObjectId(request.assetId) },
+      { $inc: { productQuantity: -1 } }
+    );
+
+    // 2️⃣ Update request
+    await requestsCollection.updateOne(
+      { _id: new ObjectId(requestId) },
+      {
+        $set: {
+          requestStatus: "approved",
+          approvalDate: new Date(),
+          processedBy: hrEmail,
+        },
+      }
+    );
+
+    // 3️⃣ Add to assignedAssets
+    await assignedAssetsCollection.insertOne({
+      assetId: request.assetId,
+      assetName: request.assetName,
+      assetImage: request.assetImage || "",
+      assetType: request.assetType,
+      employeeEmail: request.requesterEmail,
+      employeeName: request.requesterName,
+      hrEmail: request.hrEmail,
+      companyName: request.companyName,
+      assignmentDate: new Date(),
+      returnDate: null,
+      status: "assigned",
+    });
+
+    // 4️⃣ Create affiliation if not exists
+    const exists = await employeeAffiliationsCollection.findOne({
+      employeeEmail: request.requesterEmail,
+      hrEmail: request.hrEmail,
+    });
+
+    if (!exists) {
+      await employeeAffiliationsCollection.insertOne({
+        employeeEmail: request.requesterEmail,
+        employeeName: request.requesterName,
+        hrEmail: request.hrEmail,
+        companyName: request.companyName,
+        affiliationDate: new Date(),
+        status: "active",
+      });
+    }
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Approve failed" });
+  }
+});
 //---------------------------
 app.patch("/hr/requests/reject/:id", async (req, res) => {
   const requestId = req.params.id;
