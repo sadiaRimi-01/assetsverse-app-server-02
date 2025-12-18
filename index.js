@@ -130,7 +130,59 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
 
 
+// Create asset request-------------------
+app.post("/requests", async (req, res) => {
+  try {
+    const {
+      assetId,
+      assetName,
+      assetType,
+      requesterName,
+      requesterEmail,
+      hrEmail,
+      companyName,
+      note,
+    } = req.body;
 
+    // Validate required fields
+    if (!assetId || !requesterEmail || !hrEmail) {
+      return res.status(400).send({ success: false, message: "Missing required fields" });
+    }
+
+    // Ensure asset exists
+    const asset = await assetsCollection.findOne({ _id: new ObjectId(assetId) });
+    if (!asset) {
+      return res.status(404).send({ success: false, message: "Asset not found" });
+    }
+
+    const requestDoc = {
+      assetId: new ObjectId(assetId),
+      assetName: assetName || asset.productName,
+      assetType: assetType || asset.productType,
+      requesterName,
+      requesterEmail,
+      hrEmail: hrEmail || asset.hrEmail,
+      companyName: companyName || asset.companyName || "",
+      requestDate: new Date(),
+      approvalDate: null,
+      requestStatus: "pending",
+      note: note || "",
+      processedBy: null,
+    };
+
+    const result = await requestsCollection.insertOne(requestDoc);
+
+    if (result.insertedId) {
+      res.send({ success: true });
+    } else {
+      res.send({ success: false, message: "Failed to save request" });
+    }
+
+  } catch (err) {
+    console.error("❌ Request submit error:", err);
+    res.status(500).send({ success: false, message: "Server error" });
+  }
+});
 
 // Get assigned assets for employee---------------
 app.get("/assigned-assets", async (req, res) => {
