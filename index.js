@@ -128,7 +128,42 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
 
 
+// -------------------------------------
+app.patch("/hr/employees/remove/:email", async (req, res) => {
+  try {
+    const employeeEmail = req.params.email;
+    const hrEmail = req.body.hrEmail;
 
+    // Set affiliation inactive
+    await employeeAffiliationsCollection.updateOne(
+      { employeeEmail, hrEmail },
+      { $set: { status: "inactive" } }
+    );
+
+    res.send({ success: true });
+  } catch (err) {
+    res.status(500).send({ error: "Remove failed" });
+  }
+});
+// ---------------------------------------------
+app.get("/hr/employee-limit/:email", async (req, res) => {
+  const hr = await usersCollection.findOne({ email: req.params.email });
+  res.send({ limit: hr?.packageLimit || 0 });
+});
+// request assets page 
+// Get available assets for employee request---------------
+app.get("/assets/available", async (req, res) => {
+  try {
+    const hrEmail = req.query.hrEmail; // optional filter if needed
+    const assets = await assetsCollection
+      .find({ availableQuantity: { $gt: 0 } })
+      .toArray();
+    res.send(assets);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to load assets" });
+  }
+});
 
 // Create asset request-------------------
 app.post("/requests", async (req, res) => {
