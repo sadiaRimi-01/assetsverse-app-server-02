@@ -142,12 +142,22 @@ const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
 
 
-
-
-
-
-
-
+// Reject request---------------------
+app.patch("/reject-request/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await client.db("assets_verse_db")
+      .collection("requests")
+      .updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { requestStatus: "rejected", processedBy: "HR" } }
+      );
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ success: false });
+  }
+});
 
 
 // payment
