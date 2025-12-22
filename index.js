@@ -178,14 +178,14 @@ async function run() {
           dateAdded,
         } = req.body;
 
-        // ✅ Validation (frontend based)
+       
         if (!name || !type || quantity == null) {
           return res.status(400).send({
             error: "Missing required fields",
           });
         }
 
-        // ✅ Normalize & save in ONE structure
+      
         const assetDoc = {
           name,
           image: image || "",
@@ -241,13 +241,13 @@ const asset = await assetsCollection.findOne({
         const request = await requestsCollection.findOne({ _id: new ObjectId(requestId) });
         if (!request) return res.status(404).send({ message: "Request not found" });
 
-        // 1️⃣ Reduce asset quantity
+        
         await assetsCollection.updateOne(
   { _id: new ObjectId(request.assetId) },
   { $inc: { availableQuantity: -1 } }
 );
 
-        // 2️⃣ Update request
+      
         await requestsCollection.updateOne(
           { _id: new ObjectId(requestId) },
           {
@@ -259,22 +259,22 @@ const asset = await assetsCollection.findOne({
           }
         );
 
-        // 3️⃣ Add to assignedAssets
+       
         await assignedAssetsCollection.insertOne({
   assetId: asset._id,
-  assetName: asset.name,            // ✅ FIX
-  assetImage: asset.image || "",    // ✅ FIX
-  assetType: asset.type,            // ✅ FIX
+  assetName: asset.name,           
+  assetImage: asset.image || "",    
+  assetType: asset.type,           
   employeeEmail: request.requesterEmail,
   employeeName: request.requesterName,
   hrEmail: request.hrEmail,
-  companyName: asset.companyName || "", // ✅ FIX
+  companyName: asset.companyName || "",
   assignmentDate: new Date(),
   returnDate: null,
   status: "assigned",
 });
 
-        // 4️⃣ Create affiliation if not exists
+       
         const exists = await employeeAffiliationsCollection.findOne({
           employeeEmail: request.requesterEmail,
           hrEmail: request.hrEmail,
@@ -436,7 +436,7 @@ const asset = await assetsCollection.findOne({
     });
 
 
-// ✅ Paginated available assets (FOR REQUEST ASSETS PAGE ONLY)
+//  Paginated available assets (FOR REQUEST ASSETS PAGE ONLY)
 app.get("/assets/available/paginated", async (req, res) => {
   try {
     let page = parseInt(req.query.page) || 1;
@@ -599,7 +599,7 @@ app.get("/assets/available/paginated", async (req, res) => {
               employeeName: request.requesterName,
               hrEmail: request.hrEmail,
               companyName: request.companyName,
-              companyLogo: "", // optional
+              companyLogo: "", 
               affiliationDate: new Date(),
               status: "active",
             });
@@ -720,7 +720,7 @@ app.get("/assets/available/paginated", async (req, res) => {
         });
       }
       try {
-        // 🔒 1️⃣ DUPLICATE CHECK
+        //  DUPLICATE CHECK
         const alreadyPaid = await paymentsCollection.findOne({
           transactionId: sessionId,
         });
@@ -732,7 +732,7 @@ app.get("/assets/available/paginated", async (req, res) => {
           });
         }
 
-        // 2️⃣ UPDATE USER PLAN
+        //  UPDATE USER PLAN
         await usersCollection.updateOne(
           { email },
           {
@@ -743,13 +743,13 @@ app.get("/assets/available/paginated", async (req, res) => {
           }
         );
 
-        // 3️⃣ INSERT PAYMENT
+        //  INSERT PAYMENT
         await paymentsCollection.insertOne({
           hrEmail: email,
           packageName,
           employeeLimit,
           amount: Number(amount),
-          transactionId: sessionId, // 🔥 UNIQUE
+          transactionId: sessionId, 
           paymentDate: new Date(),
           status: "completed",
         });
