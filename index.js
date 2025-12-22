@@ -8,11 +8,11 @@ const port = process.env.PORT || 3000;
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 
 app.use(express.json());
-app.use(cors()); 
+app.use(cors());
 const PACKAGE_LIMIT_MAP = {
-  Starter: 5,
+  Starter: 10,
   Professional: 25,
-  Enterprise: 9999, 
+  Enterprise: 9999,
 };
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.vnd8kjj.mongodb.net/?appName=Cluster0`;
@@ -142,30 +142,70 @@ async function run() {
     });
 
     // Add new asset-------------------------
+    // app.post("/assets", async (req, res) => {
+    //   try {
+    //     const asset = req.body;
+
+    //     // Check required fields
+    //     if (!asset.productName || !asset.productType || asset.productQuantity == null) {
+    //       return res.status(400).send({ error: "Missing required fields" });
+    //     }
+
+    //     // Ensure hrEmail is attached
+    //     if (!asset.hrEmail) {
+    //       return res.status(400).send({ error: "HR email required" });
+    //     }
+
+    //     // Track availableQuantity separately--
+    //     asset.availableQuantity = asset.productQuantity;
+
+    //     const result = await assetsCollection.insertOne(asset);
+    //     res.send(result);
+    //   } catch (error) {
+    //     console.error(error);
+    //     res.status(500).send({ error: "Server error" });
+    //   }
+    // });
     app.post("/assets", async (req, res) => {
       try {
-        const asset = req.body;
+        const {
+          name,
+          image,
+          type,
+          quantity,
+          hrEmail,
+          companyName,
+          dateAdded,
+        } = req.body;
 
-        // Check required fields
-        if (!asset.productName || !asset.productType || asset.productQuantity == null) {
-          return res.status(400).send({ error: "Missing required fields" });
+        // ✅ Validation (frontend based)
+        if (!name || !type || quantity == null) {
+          return res.status(400).send({
+            error: "Missing required fields",
+          });
         }
 
-        // Ensure hrEmail is attached
-        if (!asset.hrEmail) {
-          return res.status(400).send({ error: "HR email required" });
-        }
+        // ✅ Normalize & save in ONE structure
+        const assetDoc = {
+          name,
+          image: image || "",
+          type,
+          quantity: Number(quantity),
+          availableQuantity: Number(quantity),
+          companyName: companyName || "",
+          hrEmail: hrEmail || "",
+          dateAdded: dateAdded ? new Date(dateAdded) : new Date(),
+        };
 
-        // Track availableQuantity separately--
-        asset.availableQuantity = asset.productQuantity;
+        const result = await assetsCollection.insertOne(assetDoc);
+        res.send({ success: true, insertedId: result.insertedId });
 
-        const result = await assetsCollection.insertOne(asset);
-        res.send(result);
       } catch (error) {
-        console.error(error);
+        console.error("Add asset error:", error);
         res.status(500).send({ error: "Server error" });
       }
     });
+
 
 
 
@@ -196,15 +236,16 @@ async function run() {
       try {
         const requestId = req.params.id;
         const hrEmail = req.body.hrEmail;
-
+const asset = await assetsCollection.findOne({
+  _id: new ObjectId(request.assetId),});
         const request = await requestsCollection.findOne({ _id: new ObjectId(requestId) });
         if (!request) return res.status(404).send({ message: "Request not found" });
 
         // 1️⃣ Reduce asset quantity
         await assetsCollection.updateOne(
-          { _id: new ObjectId(request.assetId) },
-          { $inc: { productQuantity: -1 } }
-        );
+  { _id: new ObjectId(request.assetId) },
+  { $inc: { availableQuantity: -1 } }
+);
 
         // 2️⃣ Update request
         await requestsCollection.updateOne(
@@ -220,18 +261,18 @@ async function run() {
 
         // 3️⃣ Add to assignedAssets
         await assignedAssetsCollection.insertOne({
-          assetId: request.assetId,
-          assetName: request.assetName,
-          assetImage: request.assetImage || "",
-          assetType: request.assetType,
-          employeeEmail: request.requesterEmail,
-          employeeName: request.requesterName,
-          hrEmail: request.hrEmail,
-          companyName: request.companyName,
-          assignmentDate: new Date(),
-          returnDate: null,
-          status: "assigned",
-        });
+  assetId: asset._id,
+  assetName: asset.name,            // ✅ FIX
+  assetImage: asset.image || "",    // ✅ FIX
+  assetType: asset.type,            // ✅ FIX
+  employeeEmail: request.requesterEmail,
+  employeeName: request.requesterName,
+  hrEmail: request.hrEmail,
+  companyName: asset.companyName || "", // ✅ FIX
+  assignmentDate: new Date(),
+  returnDate: null,
+  status: "assigned",
+});
 
         // 4️⃣ Create affiliation if not exists
         const exists = await employeeAffiliationsCollection.findOne({
@@ -244,7 +285,7 @@ async function run() {
             employeeEmail: request.requesterEmail,
             employeeName: request.requesterName,
             hrEmail: request.hrEmail,
-            companyName: request.companyName,
+            companyName: asset.companyName,
             affiliationDate: new Date(),
             status: "active",
           });
@@ -394,15 +435,65 @@ async function run() {
       }
     });
 
-    // Get assigned assets for employee---------------
-    app.get("/assigned-assets", async (req, res) => {
-      const email = req.query.email;
-      const assets = await client.db("assets_verse_db")
-        .collection("assignedAssets")
-        .find({ employeeEmail: email })
-        .toArray();
-      res.send(assets);
+
+// ✅ Paginated available assets (FOR REQUEST ASSETS PAGE ONLY)
+app.get("/assets/available/paginated", async (req, res) => {
+  try {
+    let page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 10;
+
+    if (page < 1) page = 1;
+    if (limit < 1) limit = 10;
+
+    const skip = (page - 1) * limit;
+
+    const query = { availableQuantity: { $gt: 0 } };
+
+    const total = await assetsCollection.countDocuments(query);
+
+    const assets = await assetsCollection
+      .find(query)
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    res.send({
+      assets,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     });
+  } catch (err) {
+    console.error("Pagination error:", err);
+    res.status(500).send({ error: "Failed to load assets" });
+  }
+});
+
+
+    // Get assigned assets for employee---------------
+   app.get("/assigned-assets", async (req, res) => {
+  const email = req.query.email;
+
+  const assets = await assignedAssetsCollection
+    .find({ employeeEmail: email })
+    .toArray();
+
+  const normalizedAssets = assets.map(a => ({
+    ...a,
+    assetName: a.assetName || "",
+    assetType: a.assetType || "",
+    companyName: a.companyName || "",
+    status: a.status || "assigned",
+  }));
+
+  res.send(normalizedAssets);
+});
+
+
+    
 
     // Return asset------------------------
     app.patch("/return-asset/:id", async (req, res) => {
@@ -484,9 +575,9 @@ async function run() {
           .collection("assignedAssets")
           .insertOne({
             assetId: asset._id,
-            assetName: asset.productName,
-            assetImage: asset.productImage,
-            assetType: asset.productType,
+            assetName: asset.productName||asset.name,
+            assetImage: asset.productImage||asset.image,
+            assetType: asset.productType||asset.type,
             employeeEmail: request.requesterEmail,
             employeeName: request.requesterName,
             hrEmail: request.hrEmail,
@@ -571,121 +662,147 @@ async function run() {
 
 
     // payment method 
-app.post("/create-checkout-session", async (req, res) => {
-  const { email, packageName, price, employeeLimit } = req.body;
+    app.post("/create-checkout-session", async (req, res) => {
+      const { email, packageName, price, employeeLimit } = req.body;
 
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
-      customer_email: email,
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: `${packageName} Package`,
+      try {
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          customer_email: email,
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: `${packageName} Package`,
+                },
+                unit_amount: price * 100,
+              },
+              quantity: 1,
             },
-            unit_amount: price * 100,
+          ],
+          metadata: {
+            email,
+            packageName,
+            employeeLimit,
+            amount: price,
           },
-          quantity: 1,
-        },
-      ],
-      metadata: {
-        email,
-        packageName,
-        employeeLimit,
-        amount: price,
-      },
-    success_url: `${process.env.CLIENT_URL}/dashboard/hr/payment-success?packageName=${packageName}&employeeLimit=${employeeLimit}&amount=${price}&session_id={CHECKOUT_SESSION_ID}`,
+          success_url: `${process.env.CLIENT_URL}/dashboard/hr/payment-success?packageName=${packageName}&employeeLimit=${employeeLimit}&amount=${price}&session_id={CHECKOUT_SESSION_ID}`,
 
 
-      cancel_url: `${process.env.CLIENT_URL}/dashboard/hr/upgrade`,
-    });
+          cancel_url: `${process.env.CLIENT_URL}/dashboard/hr/upgrade`,
+        });
 
-    res.send({ url: session.url });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ error: "Stripe session failed" });
-  }
-});
-
-
-
-app.post("/payments/success", async (req, res) => {
-  const { email, packageName,  amount, sessionId } = req.body;
-
-  if (!email || !packageName ||  !amount || !sessionId) {
-    return res.status(400).send({
-      success: false,
-      message: "Missing required fields",
-    });
-  }
-const employeeLimit = PACKAGE_LIMIT_MAP[packageName];
-if (!employeeLimit) {
-    return res.status(400).send({
-      success: false,
-      message: "Invalid package name",
-    });
-  }
-  try {
-    // 🔒 1️⃣ DUPLICATE CHECK
-    const alreadyPaid = await paymentsCollection.findOne({
-      transactionId: sessionId,
-    });
-
-    if (alreadyPaid) {
-      return res.send({
-        success: true,
-        message: "Payment already processed",
-      });
-    }
-
-    // 2️⃣ UPDATE USER PLAN
-    await usersCollection.updateOne(
-      { email },
-      {
-        $set: {
-          package: packageName,
-          packageLimit: employeeLimit,
-        },
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: "Stripe session failed" });
       }
-    );
-
-    // 3️⃣ INSERT PAYMENT
-    await paymentsCollection.insertOne({
-      hrEmail: email,
-      packageName,
-      employeeLimit,
-      amount: Number(amount),
-      transactionId: sessionId, // 🔥 UNIQUE
-      paymentDate: new Date(),
-      status: "completed",
     });
 
-    res.send({ success: true });
-  } catch (err) {
-    console.error("❌ Payment save error:", err);
-    res.status(500).send({ success: false });
-  }
-});
 
 
+    app.post("/payments/success", async (req, res) => {
+      const { email, packageName, amount, sessionId } = req.body;
 
-app.get("/payments/:email", async (req, res) => {
-  const email = req.params.email;
+      if (!email || !packageName || !amount || !sessionId) {
+        return res.status(400).send({
+          success: false,
+          message: "Missing required fields",
+        });
+      }
+      const employeeLimit = PACKAGE_LIMIT_MAP[packageName];
+      if (!employeeLimit) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid package name",
+        });
+      }
+      try {
+        // 🔒 1️⃣ DUPLICATE CHECK
+        const alreadyPaid = await paymentsCollection.findOne({
+          transactionId: sessionId,
+        });
 
-  const result = await paymentsCollection
-    .find({ hrEmail: email })
-    .sort({ paymentDate: -1 })
-    .toArray();
+        if (alreadyPaid) {
+          return res.send({
+            success: true,
+            message: "Payment already processed",
+          });
+        }
 
-  res.send(result);
-});
+        // 2️⃣ UPDATE USER PLAN
+        await usersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              package: packageName,
+              packageLimit: employeeLimit,
+            },
+          }
+        );
+
+        // 3️⃣ INSERT PAYMENT
+        await paymentsCollection.insertOne({
+          hrEmail: email,
+          packageName,
+          employeeLimit,
+          amount: Number(amount),
+          transactionId: sessionId, // 🔥 UNIQUE
+          paymentDate: new Date(),
+          status: "completed",
+        });
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error("❌ Payment save error:", err);
+        res.status(500).send({ success: false });
+      }
+    });
+
+
+    app.put("/assets/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updateData = req.body;
+
+        // Only allow fields that exist in DB
+        const allowedFields = ["name", "type", "quantity", "availableQuantity", "image", "hrEmail", "dateAdded"];
+        const filteredUpdate = {};
+        allowedFields.forEach((field) => {
+          if (updateData[field] !== undefined) filteredUpdate[field] = updateData[field];
+        });
+
+        const result = await assetsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: filteredUpdate }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ success: false, message: "Asset not found" });
+        }
+
+        res.send({ success: true, message: "Asset updated successfully" });
+      } catch (err) {
+        console.error("Update asset error:", err);
+        res.status(500).send({ success: false, error: "Server error" });
+      }
+    });
+    app.get("/payments/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const result = await paymentsCollection
+        .find({ hrEmail: email })
+        .sort({ paymentDate: -1 })
+        .toArray();
+
+      res.send(result);
+    });
 
 
   } finally {
-    
+
   }
 }
 
